@@ -15,14 +15,17 @@ st.caption("End-to-End Informatica ➜ Databricks Migration Automation")
 # ----------------------------------------------------
 #  BASE PATHS
 # ----------------------------------------------------
-base_dir = Path("/home/lakeops/bridge")
+# Use project-local folders instead of VM paths
+base_dir = Path(__file__).parent / "bridge"
 input_root = base_dir / "input"
 analyzer_root = base_dir / "analyzer_export"
 transpiler_root = base_dir / "transpiler_export"
 error_root = base_dir / "errors"
 
+# Create all folders if not exist
 for d in [input_root, analyzer_root, transpiler_root, error_root]:
     d.mkdir(parents=True, exist_ok=True)
+
 
 # ----------------------------------------------------
 #  SESSION SETUP
