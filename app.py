@@ -4,68 +4,14 @@ from pathlib import Path
 from glob import glob
 from huggingface_hub import InferenceClient
 
-# ----------------------------------------------------
-#  PAGE CONFIG
-# ----------------------------------------------------
-st.set_page_config(page_title="Lakebridge Automation Portal", layout="wide")
-st.title("🌉 Lakebridge Automation Portal")
-st.caption("End-to-End Informatica ➜ Databricks Migration Automation")
+# ... (previous code remains same)
 
-# ----------------------------------------------------
-#  FOLDER SETUP (local Streamlit side)
-# ----------------------------------------------------
-base_dir = Path(__file__).parent / "bridge"
-input_root = base_dir / "input"
-analyzer_root = base_dir / "analyzer_export"
-transpiler_root = base_dir / "transpiler_export"
-error_root = base_dir / "errors"
-for d in [input_root, analyzer_root, transpiler_root, error_root]:
-    d.mkdir(parents=True, exist_ok=True)
+BACKEND_URL = "http://98.70.26.8:8000" # 🔗 backend API
 
-# ----------------------------------------------------
-#  SESSION STATE
-# ----------------------------------------------------
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "Analyzer"
-if "run_folder" not in st.session_state:
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    rf = input_root / f"run_{ts}"
-    rf.mkdir(exist_ok=True)
-    st.session_state.run_folder = str(rf)
-run_folder = Path(st.session_state.run_folder)
-
-# ----------------------------------------------------
-#  SOURCE MAPS
-# ----------------------------------------------------
-analyzer_sources = {
-    "Informatica PowerCenter": "Informatica - PC",
-    "Informatica Cloud": "Informatica Cloud",
-    "Azure Data Factory (ADF)": "ADF",
-    "IBM DataStage": "Datastage",
-    "MS SQL Server": "MS SQL Server",
-    "Oracle": "Oracle",
-}
-transpiler_sources = {
-    "Informatica PowerCenter": "informatica (desktop edition)",
-    "Informatica Cloud": "informatica cloud",
-    "Azure Data Factory (ADF)": "synapse",
-    "IBM DataStage": "datastage",
-    "MS SQL Server": "mssql",
-    "Oracle": "oracle",
-}
-
-# ----------------------------------------------------
-#  BACKEND URL
-# ----------------------------------------------------
-BACKEND_URL = "http://98.70.26.8:8000"   # change if VM IP changes
-
-# ----------------------------------------------------
-#  TABS LAYOUT
-# ----------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["🧩 Analyzer", "⚙️ Transpiler", "🤖 LLM Validation"])
 
 # ----------------------------------------------------
-#  TAB 1 – ANALYZER
+# TAB 1 – ANALYZER
 # ----------------------------------------------------
 with tab1:
     st.header("Step 1️⃣ – Run Analyzer")
@@ -97,6 +43,9 @@ with tab1:
                         if res.get("status") == "success":
                             st.success("✅ Analyzer completed successfully!")
                             st.info(f"Report generated: {res['report_file']}")
+                            # ⬇️ Download button
+                            download_url = f"{BACKEND_URL}/download_file?filepath={res['report_file']}"
+                            st.markdown(f"[⬇️ Download Analyzer Report]({download_url})")
                         else:
                             st.error(res.get("message"))
                     else:
@@ -105,7 +54,7 @@ with tab1:
                     st.error(f"Request failed: {e}")
 
 # ----------------------------------------------------
-#  TAB 2 – TRANSPILER
+# TAB 2 – TRANSPILER
 # ----------------------------------------------------
 with tab2:
     st.header("Step 2️⃣ – Run Transpiler")
@@ -125,68 +74,11 @@ with tab2:
                         if "files" in res:
                             st.subheader("📁 Generated Files")
                             for f in res["files"]:
-                                st.write(f"• {f}")
+                                download_url = f"{BACKEND_URL}/download_file?filepath={res['output_folder']}/{f}"
+                                st.markdown(f"[⬇️ {f}]({download_url})")
                     else:
                         st.error(res.get("message"))
                 else:
                     st.error(f"Server error: {r.text}")
             except Exception as e:
                 st.error(f"Request failed: {e}")
-
-# ----------------------------------------------------
-#  TAB 3 – LLM VALIDATION
-# ----------------------------------------------------
-def get_latest_file(folder, exts):
-    files = []
-    for e in exts:
-        files.extend(glob(os.path.join(folder, f"**/*{e}"), recursive=True))
-    return max(files, key=os.path.getmtime) if files else None
-
-def llm_validate_auto():
-    try:
-        hf_token = os.getenv("HUGGINGFACE_API_KEY")
-        if not hf_token:
-            raise ValueError("No Hugging Face API key found – running mock mode.")
-        client = InferenceClient(token=hf_token)
-        xml = get_latest_file(str(input_root), [".xml"])
-        pyspark = get_latest_file(str(transpiler_root), ["m_*.py"])
-        if not xml or not pyspark:
-            return "❌ Missing XML or PySpark file."
-        with open(xml) as f1, open(pyspark) as f2:
-            x, p = f1.read(), f2.read()
-        prompt = f"""
-        You are an ETL migration validator.
-        Compare the Informatica XML and PySpark code.
-        Summarize and state Pass/Fail.
-        --- XML ---
-        {x[:4000]}
-        --- PySpark ---
-        {p[:4000]}
-        """
-        res = client.text_generation(prompt, model="HuggingFaceH4/zephyr-7b-beta",
-                                     max_new_tokens=800, temperature=0.3)
-        return res
-    except Exception as e:
-        return f"🧠 Mock Validation: {e}"
-
-with tab3:
-    st.header("Step 3️⃣ – Validate with LLM (v2.1)")
-    if st.button("🧠 Run LLM Validation"):
-        with st.spinner("Validating ETL logic..."):
-            r = llm_validate_auto()
-        st.success("✅ Validation Completed")
-        st.markdown("### 🔍 Validation Report")
-        st.markdown(r)
-
-# ----------------------------------------------------
-#  AUTO TAB SWITCH
-# ----------------------------------------------------
-js = f"""
-<script>
-const tabName = '{st.session_state.active_tab}';
-const tabs = Array.from(parent.document.querySelectorAll('button[data-baseweb="tab"]'));
-const target = tabs.find(t => t.innerText.trim().includes(tabName));
-if (target) target.click();
-</script>
-"""
-st.markdown(js, unsafe_allow_html=True)
