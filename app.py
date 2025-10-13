@@ -145,8 +145,15 @@ def llm_validate_auto():
 # ----------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["🧩 Analyzer", "⚙️ Transpiler", "🤖 LLM Validation"])
 
+import requests
+
 # ----------------------------------------------------
-#  TAB 1 – ANALYZER
+#  BACKEND BASE URL (Azure VM public IP)
+# ----------------------------------------------------
+BACKEND_URL = "http://98.70.26.8:8000"   # ✅ update if your VM IP changes
+
+# ----------------------------------------------------
+#  TAB 1 – ANALYZER (using backend API)
 # ----------------------------------------------------
 with tab1:
     st.header("Step 1️⃣ - Run Analyzer")
@@ -157,48 +164,39 @@ with tab1:
 
     uploaded_files = st.file_uploader("Upload XML Files", type=["xml"], accept_multiple_files=True)
     if uploaded_files:
+        uploaded_paths = []
         for f in uploaded_files:
-            with open(run_folder / f.name, "wb") as out:
+            local_path = run_folder / f.name
+            with open(local_path, "wb") as out:
                 out.write(f.read())
+            uploaded_paths.append(local_path)
         st.success(f"Uploaded {len(uploaded_files)} file(s).")
 
     if st.button("▶️ Run Analyzer"):
-        placeholder = st.empty()
-        placeholder.info("Running Analyzer... ⏳")
-        try:
-            report_path = analyzer_root / f"analyzer_{run_folder.name}.xlsx"
-            cmd = [
-                "databricks", "labs", "lakebridge", "analyze",
-                "--source-directory", str(run_folder),
-                "--report-file", str(report_path),
-                "--source-tech", analyzer_source
-            ]
-            subprocess.run(cmd, check=True)
-            st.session_state.generated_files.append(str(report_path))
-            st.session_state.analyzer_done = True
-            placeholder.success("✅ Analyzer completed!")
-
-            # Automatically move to Transpiler tab
-            st.session_state.active_tab = "Transpiler"
-            st.rerun()
-
-        except subprocess.CalledProcessError as e:
-            placeholder.error(f"Analyzer failed: {e}")
-
-    if st.session_state.analyzer_done:
-        st.subheader("📊 Analyzer Report")
-        for fpath in st.session_state.generated_files:
-            if fpath.endswith(".xlsx") and os.path.exists(fpath):
-                with open(fpath, "rb") as f:
-                    st.download_button(
-                        label=f"⬇️ Download {Path(fpath).name}",
-                        data=f,
-                        file_name=Path(fpath).name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+        if not uploaded_files:
+            st.warning("Please upload at least one XML file first.")
+        else:
+            with st.spinner("Running Analyzer on backend... ⏳"):
+                try:
+                    xml_file_path = uploaded_paths[0]
+                    files = {"file": open(xml_file_path, "rb")}
+                    data = {"source_tech": analyzer_source}
+                    resp = requests.post(f"{BACKEND_URL}/run_analyzer", files=files, data=data)
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        if result.get("status") == "success":
+                            report_path = result["report_file"]
+                            st.success("✅ Analyzer completed successfully!")
+                            st.info(f"Report generated: {report_path}")
+                        else:
+                            st.error(f"Analyzer failed: {result}")
+                    else:
+                        st.error(f"Server error: {resp.text}")
+                except Exception as e:
+                    st.error(f"Request failed: {e}")
 
 # ----------------------------------------------------
-#  TAB 2 – TRANSPILER
+#  TAB 2 – TRANSPILER (using backend API)
 # ----------------------------------------------------
 with tab2:
     st.header("Step 2️⃣ - Run Transpiler")
@@ -206,48 +204,25 @@ with tab2:
     transpiler_source = transpiler_sources[source_label2]
 
     if st.button("▶️ Run Transpiler"):
-        placeholder = st.empty()
-        placeholder.info("Running Transpiler... ⏳")
-        try:
-            transpiler_out = transpiler_root / run_folder.name
-            transpiler_out.mkdir(exist_ok=True)
-            cmd = [
-                "databricks", "labs", "lakebridge", "transpile",
-                "--input-source", str(run_folder),
-                "--output-folder", str(transpiler_out),
-                "--catalog-name", "dev",
-                "--schema-name", "lakebridge",
-                "--source-dialect", transpiler_source,
-                "--error-file-path", str(error_root / f"errors_{run_folder.name}.txt")
-            ]
-            subprocess.run(cmd, check=True)
-            for f in os.listdir(transpiler_out):
-                st.session_state.generated_files.append(str(transpiler_out / f))
-            st.session_state.transpiler_done = True
-            placeholder.success("✅ Transpiler completed!")
-
-            # Auto jump to LLM Validation
-            st.session_state.active_tab = "LLM Validation"
-            st.rerun()
-
-        except subprocess.CalledProcessError as e:
-            placeholder.error(f"Transpiler failed: {e}")
-
-    if st.session_state.transpiler_done:
-        st.subheader("📁 Transpiler Output Files")
-        transpiler_files = [
-            f for f in st.session_state.generated_files if f.endswith((".py", ".json"))
-        ]
-        for fpath in transpiler_files:
-            if os.path.exists(fpath):
-                with open(fpath, "rb") as f:
-                    st.download_button(
-                        label=f"⬇️ Download {Path(fpath).name}",
-                        data=f,
-                        file_name=Path(fpath).name,
-                        mime="text/plain",
-                    )
-
+        with st.spinner("Running Transpiler on backend... ⏳"):
+            try:
+                data = {"dialect": transpiler_source}
+                resp = requests.post(f"{BACKEND_URL}/run_transpiler", data=data)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    if result.get("status") == "success":
+                        st.success("✅ Transpiler completed successfully!")
+                        st.info(f"Output Folder: {result['output_folder']}")
+                        if "files" in result:
+                            st.subheader("📁 Generated Files")
+                            for f in result["files"]:
+                                st.write(f"- {f}")
+                    else:
+                        st.error(f"Transpiler failed: {result}")
+                else:
+                    st.error(f"Server error: {resp.text}")
+            except Exception as e:
+                st.error(f"Request failed: {e}")
 # ----------------------------------------------------
 #  TAB 3 – LLM VALIDATION
 # ----------------------------------------------------
